@@ -9,7 +9,10 @@ const appData = {
     recordingStartTime: null,
     videoStream: null,
     ws: null,
-    typingTimeout: null
+    typingTimeout: null,
+    typingIndicatorTimeout: null,
+    reconnectAttempts: 0,
+    maxReconnectAttempts: 10
 };
 
 // Эмодзи
@@ -59,41 +62,86 @@ async function initializeApp() {
 
 async function loadChats() {
     try {
-        appData.chats = await API.chats.getAll();
+        const chats = await API.chats.getAll();
+        
+        // Сохраняем старые данные для сравнения
+        const oldChats = appData.chats;
+        appData.chats = chats;
+        
+        // Проверяем, изменился ли текущий чат
+        if (appData.currentChatId) {
+            const currentChat = chats.find(c => c.id === appData.currentChatId);
+            if (currentChat) {
+                // Обновляем заголовок если изменились данные
+                const oldChat = oldChats.find(c => c.id === appData.currentChatId);
+                if (!oldChat || oldChat.last_message !== currentChat.last_message) {
+                    document.getElementById('chatName').textContent = currentChat.name || 'Чат';
+                }
+            }
+        }
+        
         renderChatList();
     } catch (error) {
         console.error('Failed to load chats:', error);
-        showNotification('Ошибка загрузки чатов');
+        // Не показываем уведомление при фоновом обновлении
     }
 }
 
 function connectWebSocket() {
     const token = AuthStorage.getToken();
-    appData.ws = new WebSocket(`${API_CONFIG.WS_URL}?token=${token}`);
+    if (!token) return;
     
-    appData.ws.onopen = () => {
-        console.log('WebSocket connected');
-    };
-    
-    appData.ws.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        handleWebSocketMessage(data);
-    };
-    
-    appData.ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
-    };
-    
-    appData.ws.onclose = () => {
-        console.log('WebSocket disconnected, reconnecting...');
-        setTimeout(connectWebSocket, 3000);
-    };
+    try {
+        console.log('[WebSocket] Connecting...');
+        appData.ws = new WebSocket(`${API_CONFIG.WS_URL}?token=${token}`);
+        
+        appData.ws.onopen = () => {
+            console.log('[WebSocket] Connected successfully');
+            appData.reconnectAttempts = 0;
+            showNotification('Подключено к серверу');
+        };
+        
+        appData.ws.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                console.log('[WebSocket] Received:', data.type, data);
+                handleWebSocketMessage(data);
+            } catch (error) {
+                console.error('[WebSocket] Failed to parse message:', error);
+            }
+        };
+        
+        appData.ws.onerror = (error) => {
+            console.error('[WebSocket] Error:', error);
+        };
+        
+        appData.ws.onclose = (event) => {
+            console.log('[WebSocket] Disconnected:', event.code, event.reason);
+            
+            if (appData.reconnectAttempts < appData.maxReconnectAttempts) {
+                appData.reconnectAttempts++;
+                const delay = Math.min(1000 * Math.pow(2, appData.reconnectAttempts), 30000);
+                console.log(`[WebSocket] Reconnecting in ${delay}ms (attempt ${appData.reconnectAttempts})`);
+                setTimeout(connectWebSocket, delay);
+            } else {
+                showNotification('Потеряно соединение с сервером');
+            }
+        };
+    } catch (error) {
+        console.error('[WebSocket] Failed to create connection:', error);
+    }
 }
 
 function handleWebSocketMessage(data) {
     switch (data.type) {
         case 'new_message':
             handleNewMessage(data.message);
+            break;
+        case 'message_edited':
+            handleMessageEdited(data.message);
+            break;
+        case 'message_deleted':
+            handleMessageDeleted(data.messageId);
             break;
         case 'user_status':
             handleUserStatus(data.userId, data.status);
@@ -104,41 +152,129 @@ function handleWebSocketMessage(data) {
     }
 }
 
+function handleMessageEdited(message) {
+    const chatId = message.chat_id;
+    
+    if (appData.messages[chatId]) {
+        const index = appData.messages[chatId].findIndex(m => m.id === message.id);
+        if (index !== -1) {
+            appData.messages[chatId][index] = message;
+            
+            if (appData.currentChatId === chatId) {
+                renderMessages();
+            }
+        }
+    }
+}
+
+function handleMessageDeleted(messageId) {
+    // Находим и удаляем сообщение из всех чатов
+    Object.keys(appData.messages).forEach(chatId => {
+        const index = appData.messages[chatId].findIndex(m => m.id === messageId);
+        if (index !== -1) {
+            appData.messages[chatId].splice(index, 1);
+            
+            if (appData.currentChatId === parseInt(chatId)) {
+                renderMessages();
+            }
+        }
+    });
+}
+
 function handleNewMessage(message) {
+    console.log('[Message] New message received:', message.id, 'for chat', message.chat_id);
+    
     const chatId = message.chat_id;
     
     if (!appData.messages[chatId]) {
         appData.messages[chatId] = [];
     }
     
+    // Проверяем, не дубликат ли это
+    const exists = appData.messages[chatId].find(m => m.id === message.id);
+    if (exists) {
+        console.log('[Message] Duplicate message ignored:', message.id);
+        return;
+    }
+    
+    console.log('[Message] Adding message to chat', chatId);
     appData.messages[chatId].push(message);
     
     if (appData.currentChatId === chatId) {
+        console.log('[Message] Rendering messages for current chat');
+        // Сохраняем позицию скролла
+        const messagesContainer = document.getElementById('messages');
+        const wasAtBottom = messagesContainer.scrollHeight - messagesContainer.scrollTop <= messagesContainer.clientHeight + 100;
+        
         renderMessages();
-        API.messages.markRead(message.id).catch(console.error);
+        
+        // Автоматически отмечаем как прочитанное если это текущий чат
+        if (message.user_id !== appData.currentUser.id) {
+            API.messages.markRead(message.id).catch(console.error);
+        }
+        
+        // Скроллим вниз только если были внизу
+        if (wasAtBottom) {
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+    } else {
+        console.log('[Message] Message for different chat, showing notification');
+        // Показываем уведомление если сообщение не в текущем чате
+        if (message.user_id !== appData.currentUser.id) {
+            const chat = appData.chats.find(c => c.id === chatId);
+            if (chat) {
+                const preview = message.content || 'Медиа';
+                showNotification(`${message.username || chat.name}: ${preview.substring(0, 50)}`);
+            }
+        }
     }
     
+    // Обновляем список чатов для отображения последнего сообщения
     loadChats();
 }
 
 function handleUserStatus(userId, status) {
+    // Обновляем статус в списке чатов
     appData.chats.forEach(chat => {
         if (chat.type === 'private') {
-            // Обновляем статус в UI
+            // Можно добавить логику определения, какой чат относится к этому пользователю
             renderChatList();
         }
     });
+    
+    // Если это текущий чат, обновляем статус в заголовке
+    if (appData.currentChatId) {
+        const currentChat = appData.chats.find(c => c.id === appData.currentChatId);
+        if (currentChat && currentChat.type === 'private') {
+            const statusElement = document.getElementById('chatStatus');
+            if (statusElement && !statusElement.textContent.includes('печатает')) {
+                statusElement.textContent = status === 'online' ? 'онлайн' : 'офлайн';
+            }
+        }
+    }
 }
 
 function handleTyping(userId, chatId) {
-    if (appData.currentChatId === chatId) {
-        const chat = appData.chats.find(c => c.id === chatId);
-        if (chat) {
-            document.getElementById('chatStatus').textContent = 'печатает...';
-            setTimeout(() => {
-                document.getElementById('chatStatus').textContent = chat.status || '';
-            }, 3000);
+    if (appData.currentChatId === chatId && userId !== appData.currentUser.id) {
+        const statusElement = document.getElementById('chatStatus');
+        const originalStatus = statusElement.textContent;
+        
+        statusElement.textContent = 'печатает...';
+        statusElement.style.color = 'var(--accent-color)';
+        
+        // Очищаем предыдущий таймер
+        if (appData.typingIndicatorTimeout) {
+            clearTimeout(appData.typingIndicatorTimeout);
         }
+        
+        // Возвращаем оригинальный статус через 3 секунды
+        appData.typingIndicatorTimeout = setTimeout(() => {
+            const chat = appData.chats.find(c => c.id === chatId);
+            if (chat && appData.currentChatId === chatId) {
+                statusElement.textContent = chat.status || `${chat.member_count || 0} участников`;
+                statusElement.style.color = '';
+            }
+        }, 3000);
     }
 }
 
@@ -146,22 +282,28 @@ function setupEventListeners() {
     // Отправка сообщения
     document.getElementById('sendBtn').addEventListener('click', sendMessage);
     document.getElementById('messageInput').addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') sendMessage();
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            sendMessage();
+        }
     });
     
     // Индикатор печатает
+    let typingTimer;
     document.getElementById('messageInput').addEventListener('input', () => {
-        if (appData.typingTimeout) clearTimeout(appData.typingTimeout);
+        if (!appData.currentChatId || !appData.ws || appData.ws.readyState !== WebSocket.OPEN) return;
         
-        if (appData.ws && appData.ws.readyState === WebSocket.OPEN && appData.currentChatId) {
-            appData.ws.send(JSON.stringify({
-                type: 'typing',
-                chatId: appData.currentChatId
-            }));
-        }
+        clearTimeout(typingTimer);
         
-        appData.typingTimeout = setTimeout(() => {
-            // Перестал печатать
+        // Отправляем событие "печатает"
+        appData.ws.send(JSON.stringify({
+            type: 'typing',
+            chatId: appData.currentChatId
+        }));
+        
+        // Через 3 секунды перестаем "печатать"
+        typingTimer = setTimeout(() => {
+            // Можно отправить событие "перестал печатать" если нужно
         }, 3000);
     });
     
@@ -186,9 +328,16 @@ function setupEventListeners() {
     document.getElementById('newChatBtn').addEventListener('click', createNewChat);
     
     // Кнопка возврата к чатам (мобильная версия)
-    document.getElementById('backToChatsBtn').addEventListener('click', () => {
-        document.querySelector('.sidebar').classList.remove('hidden');
-    });
+    const backBtn = document.getElementById('backToChatsBtn');
+    if (backBtn) {
+        backBtn.addEventListener('click', () => {
+            document.querySelector('.sidebar').classList.remove('hidden');
+            document.querySelector('.chat-area').style.display = 'none';
+            setTimeout(() => {
+                document.querySelector('.chat-area').style.display = 'flex';
+            }, 10);
+        });
+    }
     
     // Настройки
     document.getElementById('settingsBtn').addEventListener('click', openSettings);
@@ -234,13 +383,21 @@ async function selectChat(chatId) {
     appData.currentChatId = chatId;
     const chat = appData.chats.find(c => c.id === chatId);
     
-    document.getElementById('chatName').textContent = chat.name;
-    document.getElementById('chatStatus').textContent = chat.status || `${chat.member_count} участников`;
+    if (!chat) return;
+    
+    document.getElementById('chatName').textContent = chat.name || 'Чат';
+    document.getElementById('chatStatus').textContent = chat.status || `${chat.member_count || 0} участников`;
     
     // Загружаем сообщения
     try {
         appData.messages[chatId] = await API.messages.getChat(chatId);
         renderMessages();
+        
+        // Отмечаем все сообщения как прочитанные
+        const unreadMessages = appData.messages[chatId].filter(m => m.user_id !== appData.currentUser.id);
+        for (const msg of unreadMessages) {
+            API.messages.markRead(msg.id).catch(console.error);
+        }
     } catch (error) {
         console.error('Failed to load messages:', error);
         showNotification('Ошибка загрузки сообщений');
@@ -256,6 +413,8 @@ async function selectChat(chatId) {
 
 function renderMessages() {
     const messagesContainer = document.getElementById('messages');
+    const wasAtBottom = messagesContainer.scrollHeight - messagesContainer.scrollTop <= messagesContainer.clientHeight + 100;
+    
     messagesContainer.innerHTML = '';
     
     if (!appData.currentChatId) return;
@@ -265,6 +424,8 @@ function renderMessages() {
     messages.forEach(message => {
         const messageDiv = document.createElement('div');
         messageDiv.className = 'message';
+        messageDiv.dataset.messageId = message.id;
+        
         if (message.user_id === appData.currentUser.id) {
             messageDiv.classList.add('own');
         }
@@ -274,7 +435,7 @@ function renderMessages() {
         if (message.type === 'text') {
             content = `<div class="message-text">${escapeHtml(message.content)}</div>`;
         } else if (message.type === 'image') {
-            content = `<img src="${API_CONFIG.BASE_URL}${message.file_url}" class="message-image" alt="Изображение">`;
+            content = `<img src="${API_CONFIG.BASE_URL}${message.file_url}" class="message-image" alt="Изображение" loading="lazy">`;
         } else if (message.type === 'voice') {
             content = `
                 <div class="voice-message">
@@ -284,14 +445,18 @@ function renderMessages() {
             `;
         } else if (message.type === 'video') {
             content = `
-                <video class="message-image" controls>
+                <video class="message-image" controls preload="metadata">
                     <source src="${API_CONFIG.BASE_URL}${message.file_url}" type="video/webm">
+                    Ваш браузер не поддерживает видео
                 </video>
             `;
         } else if (message.type === 'file') {
+            const fileName = message.content || 'Файл';
             content = `
                 <div class="file-message">
-                    <a href="${API_CONFIG.BASE_URL}${message.file_url}" download>📎 ${message.content || 'Файл'}</a>
+                    <a href="${API_CONFIG.BASE_URL}${message.file_url}" download="${fileName}" target="_blank">
+                        📎 ${escapeHtml(fileName)}
+                    </a>
                 </div>
             `;
         }
@@ -308,10 +473,14 @@ function renderMessages() {
         messagesContainer.appendChild(messageDiv);
     });
     
-    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    // Автоскролл только если пользователь был внизу
+    if (wasAtBottom || messages.length === 1) {
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    }
 }
 
 function escapeHtml(text) {
+    if (!text) return '';
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
@@ -323,27 +492,24 @@ async function sendMessage() {
     
     if (!text || !appData.currentChatId) return;
     
+    // Очищаем поле сразу для лучшего UX
+    input.value = '';
+    
     try {
+        console.log('[Message] Sending to chat', appData.currentChatId);
         const message = await API.messages.send({
             chatId: appData.currentChatId,
             content: text,
             type: 'text'
         });
+        console.log('[Message] Sent successfully:', message.id);
         
-        input.value = '';
-        
-        // Сообщение придет через WebSocket
+        // Сообщение придет через WebSocket и отобразится автоматически
     } catch (error) {
-        console.error('Failed to send message:', error);
+        console.error('[Message] Failed to send:', error);
         showNotification('Ошибка отправки сообщения');
-    }
-    
-    // Отправляем событие "печатает"
-    if (appData.ws && appData.ws.readyState === WebSocket.OPEN) {
-        appData.ws.send(JSON.stringify({
-            type: 'typing',
-            chatId: appData.currentChatId
-        }));
+        // Возвращаем текст обратно в поле при ошибке
+        input.value = text;
     }
 }
 
@@ -377,20 +543,32 @@ function insertEmoji(emoji) {
 
 // Прикрепление файлов
 function attachFile() {
-    if (!appData.currentChatId) return;
+    if (!appData.currentChatId) {
+        showNotification('Выберите чат');
+        return;
+    }
     
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = 'image/*,video/*,.pdf,.doc,.docx,.txt';
+    input.accept = 'image/*,video/*,.pdf,.doc,.docx,.txt,.zip,.rar';
+    input.multiple = false;
     
     input.onchange = async (e) => {
         const file = e.target.files[0];
         if (!file) return;
         
+        // Проверка размера файла (макс 100MB)
+        if (file.size > 100 * 1024 * 1024) {
+            showNotification('Файл слишком большой (макс 100MB)');
+            return;
+        }
+        
         try {
             let type = 'file';
             if (file.type.startsWith('image/')) type = 'image';
             else if (file.type.startsWith('video/')) type = 'video';
+            
+            showNotification('Отправка файла...');
             
             await API.messages.send({
                 chatId: appData.currentChatId,
@@ -399,7 +577,7 @@ function attachFile() {
                 file: file
             });
             
-            showNotification('Файл отправлен');
+            // Сообщение придет через WebSocket
         } catch (error) {
             console.error('Failed to send file:', error);
             showNotification('Ошибка отправки файла');
@@ -411,7 +589,10 @@ function attachFile() {
 
 // Голосовое сообщение
 async function startVoiceRecording() {
-    if (!appData.currentChatId) return;
+    if (!appData.currentChatId) {
+        showNotification('Выберите чат');
+        return;
+    }
     
     try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -430,7 +611,8 @@ async function startVoiceRecording() {
         document.getElementById('voiceModal').classList.add('active');
         updateRecordingTime();
     } catch (err) {
-        alert('Не удалось получить доступ к микрофону');
+        console.error('Microphone access error:', err);
+        showNotification('Не удалось получить доступ к микрофону');
     }
 }
 
@@ -463,9 +645,11 @@ async function sendVoiceMessage() {
     
     appData.mediaRecorder.onstop = async () => {
         const blob = new Blob(appData.recordedChunks, { type: 'audio/webm' });
-        const file = new File([blob], 'voice.webm', { type: 'audio/webm' });
+        const file = new File([blob], `voice_${Date.now()}.webm`, { type: 'audio/webm' });
         
         try {
+            showNotification('Отправка голосового сообщения...');
+            
             await API.messages.send({
                 chatId: appData.currentChatId,
                 content: 'Голосовое сообщение',
@@ -473,7 +657,7 @@ async function sendVoiceMessage() {
                 file: file
             });
             
-            showNotification('Голосовое сообщение отправлено');
+            // Сообщение придет через WebSocket
         } catch (error) {
             console.error('Failed to send voice:', error);
             showNotification('Ошибка отправки голосового сообщения');
@@ -481,6 +665,7 @@ async function sendVoiceMessage() {
         
         appData.mediaRecorder.stream.getTracks().forEach(track => track.stop());
         document.getElementById('voiceModal').classList.remove('active');
+        appData.recordedChunks = [];
     };
 }
 
@@ -491,11 +676,18 @@ function playAudio(url) {
 
 // Видео кружок
 async function startVideoRecording() {
-    if (!appData.currentChatId) return;
+    if (!appData.currentChatId) {
+        showNotification('Выберите чат');
+        return;
+    }
     
     try {
         appData.videoStream = await navigator.mediaDevices.getUserMedia({ 
-            video: { width: 400, height: 400 }, 
+            video: { 
+                width: { ideal: 400 }, 
+                height: { ideal: 400 },
+                facingMode: 'user'
+            }, 
             audio: true 
         });
         
@@ -503,8 +695,12 @@ async function startVideoRecording() {
         videoPreview.srcObject = appData.videoStream;
         
         document.getElementById('videoModal').classList.add('active');
+        document.getElementById('sendVideo').style.display = 'none';
+        document.getElementById('recordVideo').textContent = '⏺';
+        document.getElementById('recordVideo').classList.remove('recording');
     } catch (err) {
-        alert('Не удалось получить доступ к камере');
+        console.error('Camera access error:', err);
+        showNotification('Не удалось получить доступ к камере');
     }
 }
 
@@ -554,9 +750,11 @@ async function sendVideoMessage() {
     if (!appData.recordedChunks.length) return;
     
     const blob = new Blob(appData.recordedChunks, { type: 'video/webm' });
-    const file = new File([blob], 'video.webm', { type: 'video/webm' });
+    const file = new File([blob], `video_${Date.now()}.webm`, { type: 'video/webm' });
     
     try {
+        showNotification('Отправка видео...');
+        
         await API.messages.send({
             chatId: appData.currentChatId,
             content: 'Видео кружок',
@@ -564,7 +762,7 @@ async function sendVideoMessage() {
             file: file
         });
         
-        showNotification('Видео отправлено');
+        // Сообщение придет через WebSocket
     } catch (error) {
         console.error('Failed to send video:', error);
         showNotification('Ошибка отправки видео');
@@ -959,3 +1157,47 @@ function updateSettingsUI() {
     applyFontSize(savedFontSize);
     applyWallpaper(savedWallpaper);
 }
+
+
+// Периодическое обновление списка чатов (каждые 30 секунд)
+setInterval(() => {
+    if (AuthStorage.getToken() && !document.hidden) {
+        loadChats();
+    }
+}, 30000);
+
+// Обновление при возврате на вкладку
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && AuthStorage.getToken()) {
+        loadChats();
+        
+        // Переподключаем WebSocket если отключен
+        if (!appData.ws || appData.ws.readyState !== WebSocket.OPEN) {
+            connectWebSocket();
+        }
+    }
+});
+
+// Обработка потери соединения
+window.addEventListener('online', () => {
+    showNotification('Соединение восстановлено');
+    if (AuthStorage.getToken()) {
+        loadChats();
+        if (!appData.ws || appData.ws.readyState !== WebSocket.OPEN) {
+            connectWebSocket();
+        }
+    }
+});
+
+window.addEventListener('offline', () => {
+    showNotification('Нет соединения с интернетом');
+});
+
+// Предотвращение случайного закрытия при записи
+window.addEventListener('beforeunload', (e) => {
+    if (appData.mediaRecorder && appData.mediaRecorder.state === 'recording') {
+        e.preventDefault();
+        e.returnValue = 'Идет запись. Вы уверены, что хотите покинуть страницу?';
+        return e.returnValue;
+    }
+});

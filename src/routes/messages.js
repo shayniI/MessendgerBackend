@@ -19,16 +19,29 @@ router.post('/', authenticate, upload.single('file'), async (req, res) => {
         
         const message = result.rows[0];
         
-        // Уведомляем участников чата через WebSocket
+        // Получаем информацию о пользователе для отправки в WebSocket
+        const userResult = await db.query(
+            'SELECT username, avatar FROM users WHERE id = $1',
+            [req.user.id]
+        );
+        
+        const messageWithUser = {
+            ...message,
+            username: userResult.rows[0].username,
+            avatar: userResult.rows[0].avatar
+        };
+        
+        // Уведомляем участников чата через WebSocket СРАЗУ
         if (req.app.locals.notifyChatMembers) {
             req.app.locals.notifyChatMembers(chatId, {
                 type: 'new_message',
-                message
+                message: messageWithUser
             });
         }
         
         res.json(message);
     } catch (error) {
+        console.error('Error sending message:', error);
         res.status(400).json({ error: error.message });
     }
 });
@@ -69,7 +82,17 @@ router.put('/:messageId', authenticate, async (req, res) => {
             return res.status(404).json({ error: 'Message not found' });
         }
         
-        res.json(result.rows[0]);
+        const message = result.rows[0];
+        
+        // Уведомляем участников чата об изменении
+        if (req.app.locals.notifyChatMembers) {
+            req.app.locals.notifyChatMembers(message.chat_id, {
+                type: 'message_edited',
+                message
+            });
+        }
+        
+        res.json(message);
     } catch (error) {
         res.status(400).json({ error: error.message });
     }
@@ -78,10 +101,31 @@ router.put('/:messageId', authenticate, async (req, res) => {
 // Удалить сообщение
 router.delete('/:messageId', authenticate, async (req, res) => {
     try {
+        // Сначала получаем chat_id для уведомления
+        const msgResult = await db.query(
+            'SELECT chat_id FROM messages WHERE id = $1 AND user_id = $2',
+            [req.params.messageId, req.user.id]
+        );
+        
+        if (msgResult.rows.length === 0) {
+            return res.status(404).json({ error: 'Message not found' });
+        }
+        
+        const chatId = msgResult.rows[0].chat_id;
+        
         await db.query(
             'DELETE FROM messages WHERE id = $1 AND user_id = $2',
             [req.params.messageId, req.user.id]
         );
+        
+        // Уведомляем участников чата об удалении
+        if (req.app.locals.notifyChatMembers) {
+            req.app.locals.notifyChatMembers(chatId, {
+                type: 'message_deleted',
+                messageId: parseInt(req.params.messageId)
+            });
+        }
+        
         res.json({ success: true });
     } catch (error) {
         res.status(400).json({ error: error.message });

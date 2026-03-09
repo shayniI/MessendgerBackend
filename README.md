@@ -2,6 +2,10 @@
 
 Полнофункциональный мессенджер с современным интерфейсом и real-time коммуникацией.
 
+![Status](https://img.shields.io/badge/status-ready-brightgreen)
+![Version](https://img.shields.io/badge/version-1.0.0-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
+
 ## 🚀 Быстрый старт
 
 ```bash
@@ -45,6 +49,8 @@ docker-compose up -d
 ## 📚 Документация
 
 - [QUICKSTART.md](QUICKSTART.md) - Быстрый старт за 3 минуты
+- [FEATURES.md](FEATURES.md) - Полный список функций и инструкции
+- [REALTIME_TEST.md](REALTIME_TEST.md) - Тестирование real-time функций
 - [DEPLOYMENT.md](DEPLOYMENT.md) - Развертывание на VDS
 - [INTEGRATION.md](INTEGRATION.md) - Архитектура и интеграция
 - [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md) - Структура проекта

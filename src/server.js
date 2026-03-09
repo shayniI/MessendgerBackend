@@ -33,10 +33,12 @@ wss.on('connection', async (ws, req) => {
     const user = await authenticateWS(token);
     
     if (!user) {
+        console.log('[WebSocket] Unauthorized connection attempt');
         ws.close(1008, 'Unauthorized');
         return;
     }
 
+    console.log(`[WebSocket] User ${user.id} (${user.username}) connected`);
     clients.set(user.id, ws);
     
     // Обновляем статус пользователя
@@ -50,14 +52,19 @@ wss.on('connection', async (ws, req) => {
             const message = JSON.parse(data);
             await handleWebSocketMessage(user.id, message);
         } catch (error) {
-            console.error('WebSocket error:', error);
+            console.error('[WebSocket] Error handling message:', error);
         }
     });
 
     ws.on('close', async () => {
+        console.log(`[WebSocket] User ${user.id} (${user.username}) disconnected`);
         clients.delete(user.id);
         await db.query('UPDATE users SET status = $1, last_seen = NOW() WHERE id = $2', ['offline', user.id]);
         broadcast({ type: 'user_status', userId: user.id, status: 'offline' });
+    });
+    
+    ws.on('error', (error) => {
+        console.error(`[WebSocket] Error for user ${user.id}:`, error);
     });
 });
 
@@ -81,13 +88,24 @@ function broadcast(data) {
 }
 
 async function notifyChatMembers(chatId, data) {
-    const result = await db.query('SELECT user_id FROM chat_members WHERE chat_id = $1', [chatId]);
-    result.rows.forEach(row => {
-        const client = clients.get(row.user_id);
-        if (client && client.readyState === WebSocket.OPEN) {
-            client.send(JSON.stringify(data));
-        }
-    });
+    try {
+        const result = await db.query('SELECT user_id FROM chat_members WHERE chat_id = $1', [chatId]);
+        
+        console.log(`[WebSocket] Notifying ${result.rows.length} members of chat ${chatId} about ${data.type}`);
+        
+        let sentCount = 0;
+        result.rows.forEach(row => {
+            const client = clients.get(row.user_id);
+            if (client && client.readyState === WebSocket.OPEN) {
+                client.send(JSON.stringify(data));
+                sentCount++;
+            }
+        });
+        
+        console.log(`[WebSocket] Successfully sent to ${sentCount}/${result.rows.length} members`);
+    } catch (error) {
+        console.error('[WebSocket] Error notifying chat members:', error);
+    }
 }
 
 async function markAsRead(userId, messageId) {
@@ -102,5 +120,12 @@ app.locals.notifyChatMembers = notifyChatMembers;
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+    console.log(`
+╔═══════════════════════════════════════╗
+║   Messenger Backend Server Started    ║
+╠═══════════════════════════════════════╣
+║  HTTP Server: http://localhost:${PORT}   ║
+║  WebSocket:   ws://localhost:${PORT}     ║
+╚═══════════════════════════════════════╝
+    `);
 });
