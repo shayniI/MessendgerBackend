@@ -1,0 +1,10 @@
+node_modules
+.git
+.env
+*.log
+uploads
+.DS_Store
+README.md
+DEPLOYMENT.md
+INTEGRATION.md
+QUICKSTART.md

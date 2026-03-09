@@ -214,15 +214,16 @@ docker-compose exec -T postgres psql -U messenger_user messenger < backup.sql
 
 ## Проверка работы
 
-1. Проверьте доступность API:
-```bash
-curl http://your_server_ip:3000/api/auth/login
+1. Откройте браузер и перейдите на:
+```
+http://your_server_ip
 ```
 
-2. Проверьте WebSocket (установите wscat):
+2. Зарегистрируйтесь или войдите в систему
+
+3. Проверьте API напрямую (опционально):
 ```bash
-npm install -g wscat
-wscat -c ws://your_server_ip:3000
+curl http://your_server_ip/api/auth/login
 ```
 
 ## Мониторинг

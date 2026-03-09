@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Вход - Мессенджер</title>
+    <link rel="stylesheet" href="styles.css">
+    <style>
+        .auth-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: var(--bg-primary);
+            padding: 20px;
+        }
+
+        .auth-box {
+            background: var(--bg-secondary);
+            border: 2px solid var(--border-color);
+            border-radius: 20px;
+            padding: 40px;
+            width: 100%;
+            max-width: 400px;
+            box-shadow: 0 12px 40px rgba(0,0,0,0.6);
+        }
+
+        .auth-box h1 {
+            text-align: center;
+            margin-bottom: 30px;
+            color: var(--text-primary);
+            font-size: 28px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid var(--border-color);
+            border-radius: 12px;
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            font-size: 15px;
+            transition: all 0.2s;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: var(--accent-color);
+        }
+
+        .auth-btn {
+            width: 100%;
+            padding: 14px;
+            border: none;
+            border-radius: 12px;
+            background: var(--accent-color);
+            color: white;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-top: 10px;
+        }
+
+        .auth-btn:hover {
+            background: var(--accent-hover);
+            transform: translateY(-2px);
+        }
+
+        .auth-switch {
+            text-align: center;
+            margin-top: 20px;
+            color: var(--text-secondary);
+        }
+
+        .auth-switch a {
+            color: var(--accent-color);
+            text-decoration: none;
+            font-weight: 600;
+        }
+
+        .auth-switch a:hover {
+            text-decoration: underline;
+        }
+
+        .error-message {
+            background: #ff3b3b;
+            color: white;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        .error-message.show {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="auth-container">
+        <div class="auth-box">
+            <h1 id="authTitle">Вход</h1>
+            
+            <div class="error-message" id="errorMessage"></div>
+
+            <form id="authForm">
+                <div class="form-group" id="usernameGroup" style="display: none;">
+                    <label for="username">Имя пользователя</label>
+                    <input type="text" id="username" placeholder="Введите имя">
+                </div>
+
+                <div class="form-group">
+                    <label for="email">Email</label>
+                    <input type="email" id="email" placeholder="your@email.com" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="password">Пароль</label>
+                    <input type="password" id="password" placeholder="••••••••" required>
+                </div>
+
+                <button type="submit" class="auth-btn" id="authBtn">Войти</button>
+            </form>
+
+            <div class="auth-switch">
+                <span id="switchText">Нет аккаунта?</span>
+                <a href="#" id="switchLink">Зарегистрироваться</a>
+            </div>
+        </div>
+    </div>
+
+    <script src="config.js"></script>
+    <script>
+        let isLogin = true;
+
+        const authForm = document.getElementById('authForm');
+        const authTitle = document.getElementById('authTitle');
+        const authBtn = document.getElementById('authBtn');
+        const switchText = document.getElementById('switchText');
+        const switchLink = document.getElementById('switchLink');
+        const usernameGroup = document.getElementById('usernameGroup');
+        const errorMessage = document.getElementById('errorMessage');
+
+        switchLink.addEventListener('click', (e) => {
+            e.preventDefault();
+            isLogin = !isLogin;
+            
+            if (isLogin) {
+                authTitle.textContent = 'Вход';
+                authBtn.textContent = 'Войти';
+                switchText.textContent = 'Нет аккаунта?';
+                switchLink.textContent = 'Зарегистрироваться';
+                usernameGroup.style.display = 'none';
+            } else {
+                authTitle.textContent = 'Регистрация';
+                authBtn.textContent = 'Зарегистрироваться';
+                switchText.textContent = 'Уже есть аккаунт?';
+                switchLink.textContent = 'Войти';
+                usernameGroup.style.display = 'block';
+            }
+            
+            errorMessage.classList.remove('show');
+        });
+
+        authForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            const username = document.getElementById('username').value;
+
+            try {
+                authBtn.disabled = true;
+                authBtn.textContent = 'Загрузка...';
+                errorMessage.classList.remove('show');
+
+                let response;
+                if (isLogin) {
+                    response = await API.auth.login({ email, password });
+                } else {
+                    response = await API.auth.register({ username, email, password });
+                }
+
+                AuthStorage.setToken(response.token);
+                AuthStorage.setUser(response.user);
+                
+                window.location.href = 'index.html';
+            } catch (error) {
+                errorMessage.textContent = error.message || 'Произошла ошибка';
+                errorMessage.classList.add('show');
+                authBtn.disabled = false;
+                authBtn.textContent = isLogin ? 'Войти' : 'Зарегистрироваться';
+            }
+        });
+
+        // Проверка авторизации
+        if (AuthStorage.getToken()) {
+            window.location.href = 'index.html';
+        }
+    </script>
+</body>
+</html>

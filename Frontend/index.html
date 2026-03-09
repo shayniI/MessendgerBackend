@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Мессенджер</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="app">
+        <!-- Боковая панель с чатами -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h2>Чаты</h2>
+                <div class="header-buttons">
+                    <button class="settings-btn" id="settingsBtn" title="Настройки">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="3"/>
+                            <path d="M12 1v6m0 6v6m9-9h-6m-6 0H3"/>
+                        </svg>
+                    </button>
+                    <button class="new-chat-btn" id="newChatBtn">+</button>
+                </div>
+            </div>
+            <div class="chat-list" id="chatList"></div>
+        </aside>
+
+        <!-- Основная область чата -->
+        <main class="chat-area">
+            <div class="chat-header" id="chatHeader">
+                <div class="chat-info">
+                    <h3 id="chatName">Выберите чат</h3>
+                    <span class="status" id="chatStatus"></span>
+                </div>
+            </div>
+
+            <div class="messages" id="messages"></div>
+
+            <div class="input-area">
+                <button class="attach-btn" id="attachBtn" title="Прикрепить фото">📎</button>
+                <input type="text" id="messageInput" placeholder="Введите сообщение..." />
+                <button class="emoji-btn" id="emojiBtn" title="Эмодзи">😊</button>
+                <button class="voice-btn" id="voiceBtn" title="Голосовое сообщение">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                        <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                        <line x1="12" y1="19" x2="12" y2="23"/>
+                        <line x1="8" y1="23" x2="16" y2="23"/>
+                    </svg>
+                </button>
+                <button class="video-btn" id="videoBtn" title="Видео кружок">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                        <circle cx="12" cy="12" r="10"/>
+                        <circle cx="12" cy="12" r="3" fill="currentColor"/>
+                    </svg>
+                </button>
+                <button class="send-btn" id="sendBtn" title="Отправить">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                        <line x1="22" y1="2" x2="11" y2="13"/>
+                        <polygon points="22 2 15 22 11 13 2 9 22 2" fill="currentColor"/>
+                    </svg>
+                </button>
+            </div>
+        </main>
+    </div>
+
+    <!-- Модальное окно для эмодзи -->
+    <div class="emoji-picker" id="emojiPicker"></div>
+
+    <!-- Модальное окно для записи голоса -->
+    <div class="modal" id="voiceModal">
+        <div class="modal-content">
+            <h3>Запись голосового сообщения</h3>
+            <div class="recording-indicator">
+                <span class="pulse"></span>
+                <span id="recordingTime">00:00</span>
+            </div>
+            <div class="modal-actions">
+                <button class="cancel-btn" id="cancelVoice">Отмена</button>
+                <button class="send-btn" id="sendVoice">Отправить</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно для записи кружка -->
+    <div class="modal" id="videoModal">
+        <div class="modal-content video-modal">
+            <video id="videoPreview" autoplay muted></video>
+            <canvas id="videoCanvas" style="display:none;"></canvas>
+            <div class="video-controls">
+                <button class="cancel-btn" id="cancelVideo">Отмена</button>
+                <button class="record-btn" id="recordVideo">⏺</button>
+                <button class="send-btn" id="sendVideo" style="display:none;">Отправить</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Панель настроек -->
+    <div class="settings-panel" id="settingsPanel">
+        <div class="settings-header">
+            <button class="back-btn" id="backBtn">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M19 12H5M12 19l-7-7 7-7"/>
+                </svg>
+            </button>
+            <h2 id="settingsTitle">Настройки</h2>
+        </div>
+
+        <!-- Главное меню настроек -->
+        <div class="settings-content" id="mainSettings">
+            <!-- Профиль -->
+            <div class="settings-section">
+                <div class="profile-card">
+                    <div class="profile-avatar">
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                            <circle cx="12" cy="7" r="4"/>
+                        </svg>
+                    </div>
+                    <div class="profile-info">
+                        <h3 id="profileName">Мой профиль</h3>
+                        <p id="profilePhone">+7 900 123 45 67</p>
+                    </div>
+                    <button class="edit-profile-btn" id="editProfileBtn">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Основные настройки -->
+            <div class="settings-section">
+                <h4 class="section-title">Основные</h4>
+                
+                <div class="setting-item" id="notificationsSetting">
+                    <div class="setting-icon">🔔</div>
+                    <div class="setting-info">
+                        <div class="setting-label">Уведомления</div>
+                        <div class="setting-description">Звук и вибрация</div>
+                    </div>
+                    <label class="toggle">
+                        <input type="checkbox" id="notificationsToggle" checked>
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+
+                <div class="setting-item" id="soundSetting">
+                    <div class="setting-icon">🔊</div>
+                    <div class="setting-info">
+                        <div class="setting-label">Звук сообщений</div>
+                        <div class="setting-description">Воспроизводить звук</div>
+                    </div>
+                    <label class="toggle">
+                        <input type="checkbox" id="soundToggle" checked>
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+
+                <div class="setting-item" id="autoDownloadSetting">
+                    <div class="setting-icon">📥</div>
+                    <div class="setting-info">
+                        <div class="setting-label">Автозагрузка медиа</div>
+                        <div class="setting-description">Фото, видео и файлы</div>
+                    </div>
+                    <label class="toggle">
+                        <input type="checkbox" id="autoDownloadToggle" checked>
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- Конфиденциальность -->
+            <div class="settings-section">
+                <h4 class="section-title">Конфиденциальность</h4>
+                
+                <div class="setting-item" id="lastSeenSetting">
+                    <div class="setting-icon">👁️</div>
+                    <div class="setting-info">
+                        <div class="setting-label">Последнее посещение</div>
+                        <div class="setting-description">Все</div>
+                    </div>
+                    <span class="setting-arrow">›</span>
+                </div>
+
+                <div class="setting-item" id="readReceiptsSetting">
+                    <div class="setting-icon">✓✓</div>
+                    <div class="setting-info">
+                        <div class="setting-label">Отчеты о прочтении</div>
+                        <div class="setting-description">Показывать статус</div>
+                    </div>
+                    <label class="toggle">
+                        <input type="checkbox" id="readReceiptsToggle" checked>
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+
+                <div class="setting-item" id="blockListSetting">
+                    <div class="setting-icon">🚫</div>
+                    <div class="setting-info">
+                        <div class="setting-label">Заблокированные</div>
+                        <div class="setting-description">Список пользователей</div>
+                    </div>
+                    <span class="setting-arrow">›</span>
+                </div>
+            </div>
+
+            <!-- Внешний вид -->
+            <div class="settings-section">
+                <h4 class="section-title">Внешний вид</h4>
+                
+                <div class="setting-item" id="themeSetting">
+                    <div class="setting-icon">🎨</div>
+                    <div class="setting-info">
+                        <div class="setting-label">Тема оформления</div>
+                        <div class="setting-description">Темная</div>
+                    </div>
+                    <span class="setting-arrow">›</span>
+                </div>
+
+                <div class="setting-item" id="fontSizeSetting">
+                    <div class="setting-icon">🔤</div>
+                    <div class="setting-info">
+                        <div class="setting-label">Размер шрифта</div>
+                        <div class="setting-description">Средний</div>
+                    </div>
+                    <span class="setting-arrow">›</span>
+                </div>
+
+                <div class="setting-item" id="wallpaperSetting">
+                    <div class="setting-icon">🖼️</div>
+                    <div class="setting-info">
+                        <div class="setting-label">Фон чата</div>
+                        <div class="setting-description">По умолчанию</div>
+                    </div>
+                    <span class="setting-arrow">›</span>
+                </div>
+            </div>
+
+            <!-- Данные и память -->
+            <div class="settings-section">
+                <h4 class="section-title">Данные и память</h4>
+                
+                <div class="setting-item" id="storageSetting">
+                    <div class="setting-icon">💾</div>
+                    <div class="setting-info">
+                        <div class="setting-label">Использование памяти</div>
+                        <div class="setting-description">245 МБ</div>
+                    </div>
+                    <span class="setting-arrow">›</span>
+                </div>
+
+                <div class="setting-item" id="clearCacheSetting">
+                    <div class="setting-icon">🗑️</div>
+                    <div class="setting-info">
+                        <div class="setting-label">Очистить кэш</div>
+                        <div class="setting-description">Освободить место</div>
+                    </div>
+                    <span class="setting-arrow">›</span>
+                </div>
+            </div>
+
+            <!-- О приложении -->
+            <div class="settings-section">
+                <h4 class="section-title">Информация</h4>
+                
+                <div class="setting-item">
+                    <div class="setting-icon">ℹ️</div>
+                    <div class="setting-info">
+                        <div class="setting-label">О приложении</div>
+                        <div class="setting-description">Версия 1.0.0</div>
+                    </div>
+                </div>
+
+                <div class="setting-item">
+                    <div class="setting-icon">❓</div>
+                    <div class="setting-info">
+                        <div class="setting-label">Помощь</div>
+                        <div class="setting-description">FAQ и поддержка</div>
+                    </div>
+                    <span class="setting-arrow">›</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Подменю: Тема оформления -->
+        <div class="settings-content submenu" id="themeSubmenu" style="display: none;">
+            <div class="settings-section">
+                <h4 class="section-title">Выберите тему</h4>
+                
+                <div class="theme-option" data-theme="dark">
+                    <div class="theme-preview dark-theme">
+                        <div class="preview-header"></div>
+                        <div class="preview-content">
+                            <div class="preview-message"></div>
+                            <div class="preview-message own"></div>
+                        </div>
+                    </div>
+                    <div class="theme-info">
+                        <div class="theme-name">Темная</div>
+                        <div class="theme-check">✓</div>
+                    </div>
+                </div>
+
+                <div class="theme-option" data-theme="light">
+                    <div class="theme-preview light-theme">
+                        <div class="preview-header"></div>
+                        <div class="preview-content">
+                            <div class="preview-message"></div>
+                            <div class="preview-message own"></div>
+                        </div>
+                    </div>
+                    <div class="theme-info">
+                        <div class="theme-name">Светлая</div>
+                        <div class="theme-check">✓</div>
+                    </div>
+                </div>
+
+                <div class="theme-option" data-theme="blue">
+                    <div class="theme-preview blue-theme">
+                        <div class="preview-header"></div>
+                        <div class="preview-content">
+                            <div class="preview-message"></div>
+                            <div class="preview-message own"></div>
+                        </div>
+                    </div>
+                    <div class="theme-info">
+                        <div class="theme-name">Синяя</div>
+                        <div class="theme-check">✓</div>
+                    </div>
+                </div>
+
+                <div class="theme-option" data-theme="purple">
+                    <div class="theme-preview purple-theme">
+                        <div class="preview-header"></div>
+                        <div class="preview-content">
+                            <div class="preview-message"></div>
+                            <div class="preview-message own"></div>
+                        </div>
+                    </div>
+                    <div class="theme-info">
+                        <div class="theme-name">Фиолетовая</div>
+                        <div class="theme-check">✓</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Подменю: Размер шрифта -->
+        <div class="settings-content submenu" id="fontSizeSubmenu" style="display: none;">
+            <div class="settings-section">
+                <h4 class="section-title">Размер текста сообщений</h4>
+                
+                <div class="font-size-option" data-size="small">
+                    <div class="font-preview" style="font-size: 13px;">
+                        Пример текста сообщения
+                    </div>
+                    <div class="font-info">
+                        <div class="font-name">Маленький</div>
+                        <div class="font-check">✓</div>
+                    </div>
+                </div>
+
+                <div class="font-size-option" data-size="medium">
+                    <div class="font-preview" style="font-size: 15px;">
+                        Пример текста сообщения
+                    </div>
+                    <div class="font-info">
+                        <div class="font-name">Средний</div>
+                        <div class="font-check">✓</div>
+                    </div>
+                </div>
+
+                <div class="font-size-option" data-size="large">
+                    <div class="font-preview" style="font-size: 17px;">
+                        Пример текста сообщения
+                    </div>
+                    <div class="font-info">
+                        <div class="font-name">Большой</div>
+                        <div class="font-check">✓</div>
+                    </div>
+                </div>
+
+                <div class="font-size-option" data-size="xlarge">
+                    <div class="font-preview" style="font-size: 19px;">
+                        Пример текста сообщения
+                    </div>
+                    <div class="font-info">
+                        <div class="font-name">Очень большой</div>
+                        <div class="font-check">✓</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Подменю: Фон чата -->
+        <div class="settings-content submenu" id="wallpaperSubmenu" style="display: none;">
+            <div class="settings-section">
+                <h4 class="section-title">Выберите фон</h4>
+                
+                <div class="wallpaper-option" data-wallpaper="default">
+                    <div class="wallpaper-preview" style="background: #0f0f0f;"></div>
+                    <div class="wallpaper-info">
+                        <div class="wallpaper-name">По умолчанию</div>
+                        <div class="wallpaper-check">✓</div>
+                    </div>
+                </div>
+
+                <div class="wallpaper-option" data-wallpaper="gradient1">
+                    <div class="wallpaper-preview" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);"></div>
+                    <div class="wallpaper-info">
+                        <div class="wallpaper-name">Фиолетовый градиент</div>
+                        <div class="wallpaper-check">✓</div>
+                    </div>
+                </div>
+
+                <div class="wallpaper-option" data-wallpaper="gradient2">
+                    <div class="wallpaper-preview" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);"></div>
+                    <div class="wallpaper-info">
+                        <div class="wallpaper-name">Розовый градиент</div>
+                        <div class="wallpaper-check">✓</div>
+                    </div>
+                </div>
+
+                <div class="wallpaper-option" data-wallpaper="gradient3">
+                    <div class="wallpaper-preview" style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);"></div>
+                    <div class="wallpaper-info">
+                        <div class="wallpaper-name">Голубой градиент</div>
+                        <div class="wallpaper-check">✓</div>
+                    </div>
+                </div>
+
+                <div class="wallpaper-option" data-wallpaper="gradient4">
+                    <div class="wallpaper-preview" style="background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);"></div>
+                    <div class="wallpaper-info">
+                        <div class="wallpaper-name">Зеленый градиент</div>
+                        <div class="wallpaper-check">✓</div>
+                    </div>
+                </div>
+
+                <div class="wallpaper-option" data-wallpaper="gradient5">
+                    <div class="wallpaper-preview" style="background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);"></div>
+                    <div class="wallpaper-info">
+                        <div class="wallpaper-name">Закатный градиент</div>
+                        <div class="wallpaper-check">✓</div>
+                    </div>
+                </div>
+
+                <div class="wallpaper-option" data-wallpaper="pattern1">
+                    <div class="wallpaper-preview" style="background: #1a1a1a url('data:image/svg+xml,<svg width=\"60\" height=\"60\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M0 0h60v60H0z\" fill=\"%231a1a1a\"/><circle cx=\"30\" cy=\"30\" r=\"2\" fill=\"%23333\"/></svg>');"></div>
+                    <div class="wallpaper-info">
+                        <div class="wallpaper-name">Точки</div>
+                        <div class="wallpaper-check">✓</div>
+                    </div>
+                </div>
+
+                <div class="wallpaper-option" data-wallpaper="dark">
+                    <div class="wallpaper-preview" style="background: #000000;"></div>
+                    <div class="wallpaper-info">
+                        <div class="wallpaper-name">Черный</div>
+                        <div class="wallpaper-check">✓</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="config.js"></script>
+    <script src="app.js"></script>
+    <script src="logout.js"></script>
+</body>
+</html>
