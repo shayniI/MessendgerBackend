@@ -437,10 +437,15 @@ function renderMessages() {
         } else if (message.type === 'image') {
             content = `<img src="${API_CONFIG.BASE_URL}${message.file_url}" class="message-image" alt="Изображение" loading="lazy">`;
         } else if (message.type === 'voice') {
+            const audioId = `audio_${message.id}`;
             content = `
                 <div class="voice-message">
-                    <button class="play-btn" onclick="playAudio('${API_CONFIG.BASE_URL}${message.file_url}')">▶</button>
-                    <span class="voice-duration">0:00</span>
+                    <button class="play-btn" data-audio-id="${audioId}" onclick="toggleAudioPlayback('${audioId}', '${API_CONFIG.BASE_URL}${message.file_url}')">▶</button>
+                    <div class="voice-waveform">
+                        <div class="voice-progress" id="progress_${audioId}"></div>
+                    </div>
+                    <span class="voice-duration" id="duration_${audioId}">0:00</span>
+                    <audio id="${audioId}" src="${API_CONFIG.BASE_URL}${message.file_url}" preload="metadata"></audio>
                 </div>
             `;
         } else if (message.type === 'video') {
@@ -595,24 +600,49 @@ async function startVoiceRecording() {
     }
     
     try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        appData.mediaRecorder = new MediaRecorder(stream);
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+            audio: {
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true
+            } 
+        });
+        
+        // Определяем поддерживаемый MIME тип
+        let mimeType = 'audio/webm;codecs=opus';
+        if (!MediaRecorder.isTypeSupported(mimeType)) {
+            mimeType = 'audio/webm';
+        }
+        if (!MediaRecorder.isTypeSupported(mimeType)) {
+            mimeType = 'audio/ogg;codecs=opus';
+        }
+        
+        console.log('[Voice] Using MIME type:', mimeType);
+        
+        appData.mediaRecorder = new MediaRecorder(stream, { mimeType });
         appData.recordedChunks = [];
         
         appData.mediaRecorder.ondataavailable = (e) => {
-            if (e.data.size > 0) {
+            if (e.data && e.data.size > 0) {
+                console.log('[Voice] Chunk received:', e.data.size, 'bytes');
                 appData.recordedChunks.push(e.data);
             }
         };
         
-        appData.mediaRecorder.start();
+        appData.mediaRecorder.onerror = (e) => {
+            console.error('[Voice] Recording error:', e);
+            showNotification('Ошибка записи голоса');
+        };
+        
+        appData.mediaRecorder.start(100); // Записываем чанки каждые 100ms
         appData.recordingStartTime = Date.now();
         
+        console.log('[Voice] Recording started');
         document.getElementById('voiceModal').classList.add('active');
         updateRecordingTime();
     } catch (err) {
-        console.error('Microphone access error:', err);
-        showNotification('Не удалось получить доступ к микрофону');
+        console.error('[Voice] Microphone access error:', err);
+        showNotification('Не удалось получить доступ к микрофону. Проверьте разрешения.');
     }
 }
 
@@ -630,10 +660,21 @@ function updateRecordingTime() {
 }
 
 function cancelVoiceRecording() {
+    console.log('[Voice] Cancelling recording');
+    
     if (appData.mediaRecorder) {
-        appData.mediaRecorder.stop();
-        appData.mediaRecorder.stream.getTracks().forEach(track => track.stop());
+        if (appData.mediaRecorder.state === 'recording') {
+            appData.mediaRecorder.stop();
+        }
+        if (appData.mediaRecorder.stream) {
+            appData.mediaRecorder.stream.getTracks().forEach(track => {
+                track.stop();
+                console.log('[Voice] Track stopped');
+            });
+        }
+        appData.mediaRecorder = null;
     }
+    
     document.getElementById('voiceModal').classList.remove('active');
     appData.recordedChunks = [];
 }
@@ -641,13 +682,27 @@ function cancelVoiceRecording() {
 async function sendVoiceMessage() {
     if (!appData.mediaRecorder) return;
     
-    appData.mediaRecorder.stop();
+    // Останавливаем запись если еще идет
+    if (appData.mediaRecorder.state === 'recording') {
+        appData.mediaRecorder.stop();
+    }
     
     appData.mediaRecorder.onstop = async () => {
-        const blob = new Blob(appData.recordedChunks, { type: 'audio/webm' });
-        const file = new File([blob], `voice_${Date.now()}.webm`, { type: 'audio/webm' });
-        
         try {
+            // Определяем MIME тип
+            const mimeType = appData.recordedChunks[0]?.type || 'audio/webm';
+            const blob = new Blob(appData.recordedChunks, { type: mimeType });
+            
+            console.log('[Voice] Blob created:', blob.size, 'bytes, type:', blob.type);
+            
+            if (blob.size === 0) {
+                showNotification('Голосовое сообщение пустое');
+                cancelVoiceRecording();
+                return;
+            }
+            
+            const file = new File([blob], `voice_${Date.now()}.webm`, { type: mimeType });
+            
             showNotification('Отправка голосового сообщения...');
             
             await API.messages.send({
@@ -657,21 +712,99 @@ async function sendVoiceMessage() {
                 file: file
             });
             
+            console.log('[Voice] Sent successfully');
             // Сообщение придет через WebSocket
         } catch (error) {
-            console.error('Failed to send voice:', error);
+            console.error('[Voice] Failed to send:', error);
             showNotification('Ошибка отправки голосового сообщения');
         }
         
-        appData.mediaRecorder.stream.getTracks().forEach(track => track.stop());
+        // Очищаем ресурсы
+        if (appData.mediaRecorder && appData.mediaRecorder.stream) {
+            appData.mediaRecorder.stream.getTracks().forEach(track => track.stop());
+        }
         document.getElementById('voiceModal').classList.remove('active');
         appData.recordedChunks = [];
+        appData.mediaRecorder = null;
     };
 }
 
 function playAudio(url) {
     const audio = new Audio(url);
-    audio.play();
+    audio.play().catch(err => {
+        console.error('Failed to play audio:', err);
+        showNotification('Ошибка воспроизведения аудио');
+    });
+}
+
+// Улучшенное воспроизведение аудио с контролем
+function toggleAudioPlayback(audioId, url) {
+    const audio = document.getElementById(audioId);
+    const button = document.querySelector(`[data-audio-id="${audioId}"]`);
+    const progressBar = document.getElementById(`progress_${audioId}`);
+    const durationSpan = document.getElementById(`duration_${audioId}`);
+    
+    if (!audio) {
+        console.error('Audio element not found:', audioId);
+        return;
+    }
+    
+    // Останавливаем все другие аудио
+    document.querySelectorAll('audio').forEach(a => {
+        if (a.id !== audioId && !a.paused) {
+            a.pause();
+            a.currentTime = 0;
+            const btn = document.querySelector(`[data-audio-id="${a.id}"]`);
+            if (btn) btn.textContent = '▶';
+        }
+    });
+    
+    if (audio.paused) {
+        audio.play().then(() => {
+            button.textContent = '⏸';
+        }).catch(err => {
+            console.error('Failed to play audio:', err);
+            showNotification('Ошибка воспроизведения');
+        });
+    } else {
+        audio.pause();
+        button.textContent = '▶';
+    }
+    
+    // Обновление прогресса
+    audio.ontimeupdate = () => {
+        if (audio.duration) {
+            const progress = (audio.currentTime / audio.duration) * 100;
+            if (progressBar) progressBar.style.width = `${progress}%`;
+            
+            const currentMin = Math.floor(audio.currentTime / 60);
+            const currentSec = Math.floor(audio.currentTime % 60);
+            if (durationSpan) {
+                durationSpan.textContent = `${currentMin}:${currentSec.toString().padStart(2, '0')}`;
+            }
+        }
+    };
+    
+    // Загрузка метаданных
+    audio.onloadedmetadata = () => {
+        const minutes = Math.floor(audio.duration / 60);
+        const seconds = Math.floor(audio.duration % 60);
+        if (durationSpan && audio.currentTime === 0) {
+            durationSpan.textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+        }
+    };
+    
+    // Конец воспроизведения
+    audio.onended = () => {
+        button.textContent = '▶';
+        audio.currentTime = 0;
+        if (progressBar) progressBar.style.width = '0%';
+        if (durationSpan) {
+            const minutes = Math.floor(audio.duration / 60);
+            const seconds = Math.floor(audio.duration % 60);
+            durationSpan.textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+        }
+    };
 }
 
 // Видео кружок
@@ -708,51 +841,119 @@ function toggleVideoRecording() {
     const recordBtn = document.getElementById('recordVideo');
     const sendBtn = document.getElementById('sendVideo');
     
+    if (!appData.videoStream) {
+        showNotification('Камера не подключена');
+        return;
+    }
+    
     if (!appData.mediaRecorder || appData.mediaRecorder.state === 'inactive') {
         // Начать запись
-        appData.mediaRecorder = new MediaRecorder(appData.videoStream);
-        appData.recordedChunks = [];
-        
-        appData.mediaRecorder.ondataavailable = (e) => {
-            if (e.data.size > 0) {
-                appData.recordedChunks.push(e.data);
+        try {
+            const options = { mimeType: 'video/webm;codecs=vp8,opus' };
+            
+            // Проверяем поддержку формата
+            if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+                options.mimeType = 'video/webm';
             }
-        };
-        
-        appData.mediaRecorder.start();
-        recordBtn.textContent = '⏹';
-        recordBtn.classList.add('recording');
+            
+            appData.mediaRecorder = new MediaRecorder(appData.videoStream, options);
+            appData.recordedChunks = [];
+            
+            appData.mediaRecorder.ondataavailable = (e) => {
+                if (e.data && e.data.size > 0) {
+                    console.log('[Video] Chunk received:', e.data.size, 'bytes');
+                    appData.recordedChunks.push(e.data);
+                }
+            };
+            
+            appData.mediaRecorder.onerror = (e) => {
+                console.error('[Video] Recording error:', e);
+                showNotification('Ошибка записи видео');
+            };
+            
+            appData.mediaRecorder.start(100); // Записываем чанки каждые 100ms
+            console.log('[Video] Recording started');
+            
+            recordBtn.textContent = '⏹';
+            recordBtn.classList.add('recording');
+            sendBtn.style.display = 'none';
+        } catch (err) {
+            console.error('[Video] Failed to start recording:', err);
+            showNotification('Ошибка начала записи');
+        }
     } else {
         // Остановить запись
+        console.log('[Video] Stopping recording...');
         appData.mediaRecorder.stop();
         recordBtn.textContent = '⏺';
         recordBtn.classList.remove('recording');
-        sendBtn.style.display = 'block';
+        
+        // Показываем кнопку отправки после остановки
+        setTimeout(() => {
+            if (appData.recordedChunks.length > 0) {
+                sendBtn.style.display = 'block';
+                console.log('[Video] Recording stopped, chunks:', appData.recordedChunks.length);
+            } else {
+                showNotification('Нет записанных данных');
+            }
+        }, 500);
     }
 }
 
 function cancelVideoRecording() {
-    if (appData.mediaRecorder && appData.mediaRecorder.state === 'recording') {
-        appData.mediaRecorder.stop();
+    console.log('[Video] Cancelling recording');
+    
+    if (appData.mediaRecorder) {
+        if (appData.mediaRecorder.state === 'recording') {
+            appData.mediaRecorder.stop();
+        }
+        appData.mediaRecorder = null;
     }
     
     if (appData.videoStream) {
-        appData.videoStream.getTracks().forEach(track => track.stop());
+        appData.videoStream.getTracks().forEach(track => {
+            track.stop();
+            console.log('[Video] Track stopped:', track.kind);
+        });
+        appData.videoStream = null;
+    }
+    
+    const videoPreview = document.getElementById('videoPreview');
+    if (videoPreview) {
+        videoPreview.srcObject = null;
     }
     
     document.getElementById('videoModal').classList.remove('active');
     document.getElementById('sendVideo').style.display = 'none';
     document.getElementById('recordVideo').textContent = '⏺';
+    document.getElementById('recordVideo').classList.remove('recording');
+    
     appData.recordedChunks = [];
 }
 
 async function sendVideoMessage() {
-    if (!appData.recordedChunks.length) return;
+    if (!appData.recordedChunks || appData.recordedChunks.length === 0) {
+        showNotification('Нет записанного видео');
+        return;
+    }
     
-    const blob = new Blob(appData.recordedChunks, { type: 'video/webm' });
-    const file = new File([blob], `video_${Date.now()}.webm`, { type: 'video/webm' });
+    console.log('[Video] Preparing to send, chunks:', appData.recordedChunks.length);
     
     try {
+        // Определяем MIME тип из первого чанка
+        const mimeType = appData.recordedChunks[0].type || 'video/webm';
+        const blob = new Blob(appData.recordedChunks, { type: mimeType });
+        
+        console.log('[Video] Blob created:', blob.size, 'bytes, type:', blob.type);
+        
+        if (blob.size === 0) {
+            showNotification('Видео пустое, попробуйте еще раз');
+            cancelVideoRecording();
+            return;
+        }
+        
+        const file = new File([blob], `video_${Date.now()}.webm`, { type: mimeType });
+        
         showNotification('Отправка видео...');
         
         await API.messages.send({
@@ -762,9 +963,10 @@ async function sendVideoMessage() {
             file: file
         });
         
+        console.log('[Video] Sent successfully');
         // Сообщение придет через WebSocket
     } catch (error) {
-        console.error('Failed to send video:', error);
+        console.error('[Video] Failed to send:', error);
         showNotification('Ошибка отправки видео');
     }
     

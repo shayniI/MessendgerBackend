@@ -51,6 +51,7 @@ docker-compose up -d
 - [QUICKSTART.md](QUICKSTART.md) - Быстрый старт за 3 минуты
 - [FEATURES.md](FEATURES.md) - Полный список функций и инструкции
 - [REALTIME_TEST.md](REALTIME_TEST.md) - Тестирование real-time функций
+- [MEDIA_TEST.md](MEDIA_TEST.md) - Тестирование голоса и видео
 - [DEPLOYMENT.md](DEPLOYMENT.md) - Развертывание на VDS
 - [INTEGRATION.md](INTEGRATION.md) - Архитектура и интеграция
 - [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md) - Структура проекта
